@@ -22,7 +22,6 @@ import argparse
 import json
 import math
 import os
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from functools import partial
@@ -271,7 +270,6 @@ class TrainingConfig:
     print_steps: int = 20
     max_pixels: int = 64 * 64 * 28 * 28
     max_length: int = 4096
-    save_total_limit: int = 3
 
     freeze_vision: bool = False
     gradient_checkpointing: bool = True
@@ -354,50 +352,20 @@ def prepare_optimizer_and_scheduler(config: TrainingConfig, model, num_training_
 # ---------------------------------------------------------------------------
 # Checkpoint helpers.
 # ---------------------------------------------------------------------------
-def _checkpoint_step(path: Path) -> int:
-    try:
-        return int(path.name.split("-", 1)[1])
-    except Exception:
-        return -1
-
-
-def prune_old_checkpoints(output_dir: str, save_total_limit: int) -> None:
-    if save_total_limit <= 0:
-        return
-    root = Path(output_dir)
-    checkpoints = sorted(
-        [p for p in root.glob("checkpoint-*") if p.is_dir()],
-        key=_checkpoint_step,
-    )
-    for ckpt in checkpoints[:-save_total_limit]:
-        shutil.rmtree(ckpt, ignore_errors=True)
-
-
 def save_checkpoint(accelerator, model, processor, epoch, step, config, loss):
-    checkpoint_dir = Path(config.output_dir) / f"checkpoint-{step}"
-    hf_dir = checkpoint_dir / "final_hf"
-    accelerator.wait_for_everyone()
+    checkpoint_dir = f"{config.output_dir}/checkpoint-{step}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    info = {
+        "epoch": epoch,
+        "step": step,
+        "loss": loss,
+        "latest_checkpoint": checkpoint_dir,
+    }
     if accelerator.is_main_process:
-        hf_dir.mkdir(parents=True, exist_ok=True)
-        unwrapped = accelerator.unwrap_model(model)
-        unwrapped.save_pretrained(
-            str(hf_dir),
-            is_main_process=True,
-            save_function=accelerator.save,
-            safe_serialization=True,
-        )
-        processor.save_pretrained(str(hf_dir))
-        info = {
-            "epoch": epoch,
-            "step": step,
-            "loss": loss,
-            "latest_checkpoint": str(hf_dir),
-        }
         with open(f"{config.output_dir}/training_info.json", "w") as f:
             json.dump(info, f)
-        prune_old_checkpoints(config.output_dir, config.save_total_limit)
-        accelerator.print(f"[save] HF checkpoint saved to {hf_dir}")
-    accelerator.wait_for_everyone()
+    accelerator.save_state(checkpoint_dir, safe_serialization=False)
 
 
 def save_hf_format(accelerator, model, processor, config):
@@ -448,7 +416,6 @@ def train(args):
         print_steps=args.print_steps,
         max_pixels=args.max_pixels,
         max_length=args.max_length,
-        save_total_limit=args.save_total_limit,
         freeze_vision=args.freeze_vision,
         gradient_checkpointing=not args.no_grad_ckpt,
     )
@@ -483,21 +450,15 @@ def train(args):
     micro_steps_per_epoch = len(dataloader)
     update_steps_per_epoch = math.ceil(micro_steps_per_epoch / config.gradient_accumulation_steps)
     num_training_steps = update_steps_per_epoch * config.num_train_epochs
-    # Accelerate's prepared scheduler advances once per process on multi-GPU runs.
-    # Scale the internal horizon so CLI warmup/decay remain in global update steps.
-    scheduler_world_scale = max(1, accelerator.num_processes)
-    scheduler_warmup_steps = min(config.warmup_steps, max(1, num_training_steps // 2)) * scheduler_world_scale
-    scheduler_total_steps = max(1, num_training_steps * scheduler_world_scale)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=scheduler_warmup_steps,
-        num_training_steps=scheduler_total_steps,
+        num_warmup_steps=min(config.warmup_steps, max(1, num_training_steps // 2)),
+        num_training_steps=num_training_steps,
     )
     scheduler = accelerator.prepare(scheduler)
     accelerator.print(
         f"[sched] dataset={dataset_len} per-rank_micro_steps/epoch={micro_steps_per_epoch} "
         f"update_steps/epoch={update_steps_per_epoch} total_updates={num_training_steps} "
-        f"scheduler_total_steps={scheduler_total_steps} warmup={scheduler_warmup_steps} "
         f"world_size={accelerator.num_processes}"
     )
 
@@ -629,7 +590,6 @@ def parse_args():
     p.add_argument("--print_steps", type=int, default=20)
     p.add_argument("--max_pixels", type=int, default=64 * 64 * 28 * 28)
     p.add_argument("--max_length", type=int, default=4096)
-    p.add_argument("--save_total_limit", type=int, default=3)
 
     p.add_argument("--freeze_vision", action="store_true",
                    help="freeze vision tower; default off to match ZoomEarth full-FT")

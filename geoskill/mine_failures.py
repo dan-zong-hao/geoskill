@@ -1,14 +1,14 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import argparse
 import json
 import re
 from collections import Counter, defaultdict
 from typing import Any
-from speedup.geoskill.spatial import parse_locator, spatial_reward
+from geoskill.spatial import parse_locator, spatial_reward
 BBOX_RE = re.compile(r'"bbox_2d"\s*:\s*\[(.*?)\]', re.DOTALL)
 def _bbox(value: Any) -> list[float] | None:
     if isinstance(value, str):

@@ -1,8 +1,8 @@
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from speedup.geoskill.spatial import parse_locator, spatial_reward, spatial_violation_type
+from geoskill.spatial import parse_locator, spatial_reward, spatial_violation_type
 
 
 GT = [100, 100, 200, 200]

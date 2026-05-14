@@ -1,13 +1,13 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import argparse
 import json
 import random
 from collections import defaultdict
-from speedup.geoskill.spatial import parse_locator
+from geoskill.spatial import parse_locator
 def strat_key(r: dict) -> tuple[str, str, str, str]:
     loc = parse_locator(r.get("question", ""))
     return (
